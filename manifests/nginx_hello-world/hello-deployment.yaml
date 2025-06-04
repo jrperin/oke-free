@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    events {}
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      server {
+        listen 80;
+        location / {
+          default_type text/html;
+          add_header Content-Type "text/html; charset=utf-8";
+          return 200 '<!DOCTYPE html>
+            <html>
+            <head>
+              <title>Hello World</title>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin-top: 100px; }
+                h1 { color: #007acc; font-size: 48px; }
+                p { font-size: 20px; color: #666; }
+              </style>
+            </head>
+            <body>
+              <h1>Hello World!</h1>
+               <p>Bem-vindo ao meu site hospedado no Oracle Kubernetes Engine (OKE) ☁️</p>
+              <p>🚀 Powered by Nginx Ingress Controller</p>
+            </body>
+            </html>
+          ';
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-app
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: hello-app
+    spec:
+      containers:
+        - image: nginx:latest
+          name: nginx
+          ports:
+            - containerPort: 80
+              name: web
+          volumeMounts:
+            - name: config-vol
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: config-vol
+          configMap:
+            name: nginx-config
+            items:
+              - key: nginx.conf
+                path: nginx.conf

@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: <MEU_SITE>-tls
+  namespace: default # Mesmo namespace do seu Ingress
+spec:
+  secretName: <MEU_SITE>-tls-secret # Nome do secret que armazenará o certificado
+  issuerRef:
+    # name: letsencrypt-staging
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: <MEU_SITE>.com
+  dnsNames:
+    - <MEU_SITE>.com
+    - www.<MEU_SITE>.com # Domínios adicionais, se necessário

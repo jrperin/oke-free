@@ -1,10 +1,22 @@
-# Criando um Cluster Kubernetes na OCI utilizando OpenTofu [#MêsDoKubernetes](https://github.com/linuxtips/MesDoKubernetes)
+# Cluster Kubernetes (OKE) na Oracle OCI com Ingress + Load Balancer
+
+
+Antes de tudo, gostaria de agradecar ao [@Raphael Borges](https://r11s.com.br/) que criou o repositório [oke-free](https://github.com/Rapha-Borges/oke-free).
+
+Utilizei o projeto dele e alterei para minhas necessidades e assim como ele disponibilizou o repositório para a comunidade também venho compartilhar minhas alterações.
+
+[Veja a versão original do projeto no repositório do Rafael.](https://github.com/Rapha-Borges/oke-free)
+
+**>> Daqui para baixo segue o manual original com as minhas alterações. <<**
+
+
+## **Criando um Cluster Kubernetes na OCI utilizando OpenTofu [#MêsDoKubernetes](https://github.com/linuxtips/MesDoKubernetes)**
 
 Crie uma conta gratuita na Oracle Cloud, e provisione um cluster Kubernetes utilizando o Terraform de forma simples e rápida.
 
 Acesse este [link e crie a sua conta](https://signup.cloud.oracle.com/)
 
-### Pontos Importantes Antes de Começar
+#### Pontos Importantes Antes de Começar
 
 - Devido limitações da conta gratuita, você provavelmente precisará realizar o [upgrade para uma conta](https://cloud.oracle.com/invoices-and-orders/upgrade-and-payment) `Pay As You Go` para conseguir criar o cluster utilizando as instâncias gratuitas `VM.Standard.A1.Flex`. Você não será cobrado pelo uso de recursos gratuitos mesmo após o upgrade.
 
@@ -12,7 +24,7 @@ Acesse este [link e crie a sua conta](https://signup.cloud.oracle.com/)
 
 - Não altere o shape da instância utilizada no cluster, pois a única instância gratuita compatível com o OKE é a `VM.Standard.A1.Flex`.
 
-## Instalando o OpenTofu
+### Instalando o OpenTofu
 
 - GNU/Linux
 
@@ -31,7 +43,7 @@ Invoke-WebRequest -outfile "install-opentofu.ps1" -uri "https://get.opentofu.org
 Remove-Item install-opentofu.ps1
 ```
 
-## Instalando o OCI CLI
+### Instalando o OCI CLI
 
 - GNU/Linux
 
@@ -57,7 +69,7 @@ oci -v
 
 2. Execute o instalador e siga as instruções.
 
-## Instalando Kubectl - Kubernetes 1.28.2
+## Instalando Kubectl - Kubernetes v1.31.1
 
 - GNU/Linux
 
@@ -66,7 +78,7 @@ Kubectl é quem faz a comunicação com a API Kubernetes usando CLI. Devemos usa
 1. Baixando o binário kubectl
 
 ```
-curl -LO https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl
+curl -LO https://dl.k8s.io/release/v1.31.1/bin/linux/amd64/kubectl
 ```
 
 2. Instalando o binário
@@ -96,7 +108,7 @@ kubectl version --client
 1. Baixe o binário kubectl
 
 ```
-curl.exe -LO "https://dl.k8s.io/release/v1.28.2/bin/windows/amd64/kubectl.exe"
+curl.exe -LO "https://dl.k8s.io/release/v1.31.1/bin/windows/amd64/kubectl.exe"
 ```
 
 2. **Anexe a pasta binária kubectl à sua variável de ambiente PATH.**
@@ -114,7 +126,8 @@ kubectl version --client --output=yaml
 1. Antes de começar, clone o repositório.
 
 ```sh
-git clone https://github.com/Rapha-Borges/oke-free.git
+git clone https://github.com/jrperin/oke-free.git
+# git clone https://github.com/Rapha-Borges/oke-free.git
 ```
 
 2. Crie uma `API key`
@@ -129,12 +142,16 @@ git clone https://github.com/Rapha-Borges/oke-free.git
 
 ```
 mkdir -p ~/.oci && mv ~/Downloads/<nome_do_arquivo>.pem ~/.oci/oci_api_key.pem
+
+cp ~/.oci/oci_api_key.pem ./ssh
 ```
 
 - Windows
 
 ```
 move C:\Users\<user>\Downloads\<nome_do_arquivo>.pem C:\Users\<user>\.oci\oci_api_key.pem
+
+copy C:\Users\<user>\.oci\oci_api_key.pem ssh
 ```
 
 5. Corrija as permissões da chave privada:
@@ -193,8 +210,9 @@ vim ./env.sh
 export TF_VAR_tenancy_ocid=<your tenancy ocid>
 export TF_VAR_user_ocid=<your user ocid>
 export TF_VAR_fingerprint=<your fingerprint>
-export TF_VAR_private_key_path=~/.oci/oci_api_key.pem
-export TF_VAR_ssh_public_key=$(cat ssh/id_rsa.pub)
+export TF_VAR_private_key_path=$PWD/ssh/oci_api_key.pem
+export TF_VAR_ssh_public_key=$(cat $PWD/ssh/id_rsa.pub)
+export TF_VAR_region="<your region>"
 # Optional if you want to use a different profile name change the value below
 export TF_VAR_oci_profile="DEFAULT"
 ```
@@ -215,6 +233,7 @@ set TF_VAR_user_ocid=<your user ocid>
 set TF_VAR_fingerprint=<your fingerprint>
 set TF_VAR_private_key_path=C:\Users\<user>\.oci\oci_api_key.pem
 set TF_VAR_ssh_public_key=C:\Users\<user>\.oci\ssh\id_rsa.pub
+set TF_VAR_region="<your region>"
 # Optional if you want to use a different profile name change the value below
 set TF_VAR_oci_profile="DEFAULT"
 ```
@@ -225,15 +244,35 @@ Agora execute o arquivo para exportar as variáveis:
 env.bat
 ```
 
+
+
 ## Criando o cluster
 
-1. Instale os módulos
+1. **Antes de criar o Cluster**
+
+Vamos criar 3 componentes que vão facilitar o uso do nosso cluster.
+  
+  - Criar um `compartment` que será utilizado para salvar os recursos para não serem destruídos.
+  
+  - Criar um `bucket` com `arquivo` e um `pre-authenticated request` para armazenamento do estado do Terraform (Tofu).
+  
+  - Criar um `Public Reserved IP` que permitirá que nosso IP público não mude mesmo que o cluster seja destruído.
+
+  - Isso será feito pelo script:
+    >``` bash
+    >prepare.sh
+    >```
+  
+  - **Nota:** Ao final do `apply` do tofu o script vai copiar o Public IP do compartment `default` para o compartment `k8s` e antes do `destroy` o IP será copiado novamente para o compartment `default` para permitir a exclusao do compartment `k8s`. Os scripts que são utilizados pelo processo são `ip_restore.sh` e `ip_backup.sh` respectivamente.
+  
+
+2. **Instale os módulos**
 
 ```sh
 tofu init
 ```
 
-2. Crie o cluster.
+3. **Crie o cluster**
 
 ```sh
 tofu apply
@@ -246,7 +285,7 @@ tofu plan -out=oci.tfplan
 tofu apply -auto-approve "oci.tfplan"
 ```
 
-3. Edite o arquivo `~/.kube/config` para adicionar a autenticação com a `API KEY` conforme exemplo abaixo.
+4. **Edite o arquivo** `~/.kube/config` para adicionar a autenticação com a `API KEY` conforme exemplo abaixo
 
 ```sh
 - name: user-xxxxxxxxxx
@@ -268,31 +307,66 @@ tofu apply -auto-approve "oci.tfplan"
       - DEFAULT           # ADICIONE ESSA LINHA
 ```
 
-4. Acesse o cluster.
+5. **Acesse o cluster**
 
 ```sh
 kubectl get nodes
 ```
 
-### Script para criação do cluster
-
-#### Atenção: O script está em fase de testes e funciona apenas no Linux.
-
-Caso queira automatizar o processo de criação do cluster, basta executar o script main.sh que está na raiz do projeto. O script irá gerar a chave SSH, adicionar a chave pública na TF_VAR, inicializar o Terraform e criar o cluster.
-
-```sh
-./main.sh
-```
-
 ## Load Balancer
 
-O cluster que criamos já conta com um Network Load Balancer configurado para expor uma aplicação na porta 80. Basta configurar um serviço do tipo `NodePort` com a porta `80` e a nodePort `30080`. Exemplos de como configurar o serviço podem ser encontrados no diretório `manifests`.
+**NOTA: O Load Balancer vai ser criado via Nginx Ingress via HELM**
 
-O endereço do Load Balancer é informado na final da execução, no formato `public_ip = "xxx.xxx.xxx.xxx"` e pode ser consultado a qualquer momento com o comando:
+  - Para atribuir um Reserved IP automaticamente na criação do Loadbalancer, ele passa a ser criado na instalação do Nginx Controller via Helm
 
-```sh
-tofu output public_ip
+
+### Configurando o Nginx Ingress com Network Load Balancer
+
+#### Configurar Nginx Ingress + NLB
+
+1. Ter o Reserved IP Criado
+
+Como descrito anteriormente, o  `Reserved IP` deveria estar criado e nesse momento já copiado para o Compartment `k8s`.
+
+**ATENÇÃO!** Se o Reserved IP não estiver no mesmo compartment que o cluster o Network Load Balancer instala corretamente.
+
+  >Os scripts `ip_backup.sh` e `ip_restore.sh` são executados localmente pelo terraform para restore e backup do IP público.
+  > 
+  >- `ip_restore.sh` é executado localmente via terraform após a criação do compartment para permitir que o Nginx Controller possa usá-lo para criar o LoadBalancer.
+  > 
+  >- `ip_backupt.sh` é executado antes do deploy para mover o IP Reservado para o cluster default para nao atrapalhar o destroy.
+
+
+2. Criar o Nginx Ingress via Helm
+
+``` shell
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+
+helm repo update
+
+helm upgrade --install ingress-nginx ingress-nginx \
+    --repo https://kubernetes.github.io/ingress-nginx --namespace ingress-nginx --create-namespace \
+    --set controller.service.annotations.oci\\.oraclecloud\\.com/load-balancer-type=nlb \
+    --set controller.service.annotations.oci-network-load-balancer\\.oraclecloud\\.com/is-preserve-source=True \
+    --set controller.service.externalTrafficPolicy=Local \
+    --set controller.service.loadBalancerIP="129.148.34.39"
 ```
+
+3. Validar a instalação
+
+``` shell
+kubectl get service --namespace ingress-nginx ingress-nginx-controller --output wide --watch
+```
+
+4. Configurar o Ingress com Microsserviço (com / sem Certificado)
+
+Na pasta `./manifests/nginx_hello-world` existem os manifestos para serem utilizados
+
+### [./manifests/README.md](./manifests/nginx_hello-world/README.md)
+- Leia o passo a passo no arquivo  da pasta `manifests/nginx_helo-world`.
+
+---
+---
 
 ## Deletando o cluster
 
@@ -336,16 +410,27 @@ set OCI_CLI_AUTH=security_token
 
 Para resolver esse problema, basta deletar os recursos manualmente no console da OCI. Seguindo a ordem abaixo:
 
-- [Kubernetes Cluster](https://cloud.oracle.com/containers/clusters)
-- [Virtual Cloud Networks](https://cloud.oracle.com/networking/vcns)
-- [Compartments](https://cloud.oracle.com/identity/compartments)
+- [**Kubernetes Cluster**](https://cloud.oracle.com/containers/clusters)
+- [**Virtual Cloud Networks**](https://cloud.oracle.com/networking/vcns)
+- [**Compartments**](https://cloud.oracle.com/identity/compartments)
 
 Obs: Caso não apareça o Cluster ou a VPN para deletar, certifique que selecionou o Compartment certo `k8s`.
 
 # Referências
 
-- [OpenTofu Documentation](https://opentofu.org/docs/)
-- [Terrafom Essentials](https://www.linuxtips.io/course/terraform-essentials)
-- [Free Oracle Cloud Kubernetes cluster with Terraform](https://arnoldgalovics.com/oracle-cloud-kubernetes-terraform/)
+- [**OpenTofu Documentation**](https://opentofu.org/docs/)
+- [**Terrafom Essentials**](https://www.linuxtips.io/course/terraform-essentials)
+- [**Free Oracle Cloud Kubernetes cluster with Terraform**](https://arnoldgalovics.com/oracle-cloud-kubernetes-terraform/)
 
-## Criado por [@Raphael Borges](https://r11s.com.br/)
+- [**Tweaking Installation of Ingress Nginx on OKE With Helm**](https://ivan-delic.medium.com/tweaking-installation-of-ingress-nginx-on-oke-with-helm-60b6c3cdee1a)
+- [**Configurando um Controlador de Entrada Nginx em um Cluster**](https://docs.oracle.com/pt-br/iaas/Content/ContEng/Tasks/contengsettingupingresscontroller.htm)
+- [**Ingress NGINX Controller**](https://github.com/kubernetes/ingress-nginx)
+- [**Ingress-Nginx Controller - Installation Guide**](https://kubernetes.github.io/ingress-nginx/deploy/)
+- [**cert-manager site**](https://cert-manager.io/docs/)
+- [**Let’s Encrypt Certificate using Cert-Manager on Kubernetes (HTTP Challenge)**](https://medium.com/@manojit123/lets-encrypt-certificate-using-cert-manager-on-kubernetes-http-challenge-687ce3718baf)
+
+---
+
+### Criado por [@Raphael Borges](https://r11s.com.br/)
+
+### ALterado por [@Joao Perin](https://jrperin.com/)

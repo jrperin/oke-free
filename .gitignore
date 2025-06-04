@@ -4,7 +4,6 @@
 *.tfplan
 .terraform.lock.hcl
 
-
 # Ignore .terraform directory
 .terraform/
 
@@ -27,3 +26,7 @@ env.sh
 
 # Directory for sensible files and external files: i.e. env.sh / deployment.yaml
 temp
+
+# Personal files
+*_personal*
+pre-auth_request_url.txt
